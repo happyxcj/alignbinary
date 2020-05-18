@@ -6,12 +6,12 @@ import (
 	"unsafe"
 	"fmt"
 	"io"
-	"sync/atomic"
+	"sync"
 )
 
 type EncoderGroup struct {
-	af       AlignFactor
-	structInfos map[reflect.Type]*encodeStructInfo
+	af AlignFactor
+	structInfos sync.Map
 	ptrInfo     encodePtrInfo
 	msgInfo     encodeMsgInfo
 }
@@ -172,7 +172,7 @@ func (eg *EncoderGroup) reflectMsg(msg interface{}) (unsafe.Pointer, ptrEncoder,
 			// Convert to a pointer that points to the data of msg interface.
 			u := reflect.New(v.Type())
 			u.Elem().Set(v)
-			v=u
+			v = u
 		}
 		encoder, size = eg.typePtrEncoder(v.Elem())
 	}
@@ -227,49 +227,42 @@ func (eg *EncoderGroup) typePtrEncoder(v reflect.Value) (ptrEncoder, int) {
 	panic(fmt.Sprintf("alignbinary: call typePtrEncoder on invalid kind %v", v.Kind()))
 }
 
-//func (eg *EncoderGroup) getEncodeStructInfo(v reflect.Value) *encodeStructInfo {
-//	if eg.structInfos == nil {
-//		// Create a new one and initialize the cache.
-//		info := new(encodeStructInfo)
-//		info.init(v, eg)
-//		eg.structInfos=map[reflect.Type]*encodeStructInfo{v.Type(): info}
-//		return info
-//	}
-//	if info, ok := eg.structInfos[v.Type()]; ok {
-//		// Get from the cache.
-//		return info
-//	}
-//	info := new(encodeStructInfo)
-//	info.init(v, eg)
-//	eg.structInfos[v.Type()] = info
-//	return info
-//}
-
 func (eg *EncoderGroup) getEncodeStructInfo(v reflect.Value) *encodeStructInfo {
-	addr := (*unsafe.Pointer)(unsafe.Pointer(&eg.structInfos))
-	val := atomic.LoadPointer(addr)
-	if val == nil {
-		// Create a new one and initialize the cache.
-		info := new(encodeStructInfo)
-		info.init(v, eg)
-		newInfos := map[reflect.Type]*encodeStructInfo{v.Type(): info}
-		atomic.StorePointer(addr, unsafe.Pointer(&newInfos))
-		return info
-	}
-	infos := *(*map[reflect.Type]*encodeStructInfo)(val)
-	if info, ok := infos[v.Type()]; ok {
-		// Get from the cache.
-		return info
-	}
-	// Create a new one when there is no cache for the specified type.
-	newInfos := make(map[reflect.Type]*encodeStructInfo, len(infos)+1)
-	// Copy the exist cache.
-	for key, info := range infos {
-		newInfos[key] = info
+	val, ok := eg.structInfos.Load(v.Type())
+	if ok {
+		return val.(*encodeStructInfo)
 	}
 	info := new(encodeStructInfo)
 	info.init(v, eg)
-	newInfos[v.Type()] = info
-	atomic.StorePointer(addr, unsafe.Pointer(&newInfos))
+	eg.structInfos.Store(v.Type(), info)
 	return info
 }
+
+//func (eg *EncoderGroup) getEncodeStructInfo(v reflect.Value) *encodeStructInfo {
+//	addr := (*unsafe.Pointer)(unsafe.Pointer(&eg.structInfos))
+//	val := atomic.LoadPointer(addr)
+//	if val == nil {
+//		// Create a new one and initialize the cache.
+//		info := new(encodeStructInfo)
+//		info.init(v, eg)
+//		newInfos := map[reflect.Type]*encodeStructInfo{v.Type(): info}
+//		atomic.StorePointer(addr, unsafe.Pointer(&newInfos))
+//		return info
+//	}
+//	infos := *(*map[reflect.Type]*encodeStructInfo)(val)
+//	if info, ok := infos[v.Type()]; ok {
+//		// Get from the cache.
+//		return info
+//	}
+//	// Create a new one when there is no cache for the specified type.
+//	newInfos := make(map[reflect.Type]*encodeStructInfo, len(infos)+1)
+//	// Copy the exist cache.
+//	for key, info := range infos {
+//		newInfos[key] = info
+//	}
+//	info := new(encodeStructInfo)
+//	info.init(v, eg)
+//	newInfos[v.Type()] = info
+//	atomic.StorePointer(addr, unsafe.Pointer(&newInfos))
+//	return info
+//}

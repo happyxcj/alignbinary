@@ -6,12 +6,12 @@ import (
 	"reflect"
 	"unsafe"
 	"fmt"
-	"sync/atomic"
+	"sync"
 )
 
 type DecoderGroup struct {
 	af       AlignFactor
-	structInfos map[reflect.Type]*encodeStructInfo
+	structInfos sync.Map
 	ptrInfo     decodePtrInfo
 	msgInfo     decodeMsgInfo
 }
@@ -217,30 +217,41 @@ func (dg *DecoderGroup) typePtrDecoder(v reflect.Value) (ptrDecoder, int) {
 }
 
 func (dg *DecoderGroup) getDecodeStructInfo(v reflect.Value) *decodeStructInfo {
-	addr := (*unsafe.Pointer)(unsafe.Pointer(&dg.structInfos))
-	val := atomic.LoadPointer(addr)
-	if val == nil {
-		// Create a new one and initialize the cache.
-		info := new(decodeStructInfo)
-		info.init(v, dg)
-		newInfos := map[reflect.Type]*decodeStructInfo{v.Type(): info}
-		atomic.StorePointer(addr, unsafe.Pointer(&newInfos))
-		return info
-	}
-	infos := *(*map[reflect.Type]*decodeStructInfo)(val)
-	if info, ok := infos[v.Type()]; ok {
-		// Get from the cache.
-		return info
-	}
-	// Create a new one when there is no cache for the specified type.
-	newInfos := make(map[reflect.Type]*decodeStructInfo, len(infos)+1)
-	// Copy the exist cache.
-	for key, info := range infos {
-		newInfos[key] = info
+	val, ok := dg.structInfos.Load(v.Type())
+	if ok {
+		return val.(*decodeStructInfo)
 	}
 	info := new(decodeStructInfo)
 	info.init(v, dg)
-	newInfos[v.Type()] = info
-	atomic.StorePointer(addr, unsafe.Pointer(&newInfos))
+	dg.structInfos.Store(v.Type(), info)
 	return info
 }
+
+//func (dg *DecoderGroup) getDecodeStructInfo(v reflect.Value) *decodeStructInfo {
+//	addr := (*unsafe.Pointer)(unsafe.Pointer(&dg.structInfos))
+//	val := atomic.LoadPointer(addr)
+//	if val == nil {
+//		// Create a new one and initialize the cache.
+//		info := new(decodeStructInfo)
+//		info.init(v, dg)
+//		newInfos := map[reflect.Type]*decodeStructInfo{v.Type(): info}
+//		atomic.StorePointer(addr, unsafe.Pointer(&newInfos))
+//		return info
+//	}
+//	infos := *(*map[reflect.Type]*decodeStructInfo)(val)
+//	if info, ok := infos[v.Type()]; ok {
+//		// Get from the cache.
+//		return info
+//	}
+//	// Create a new one when there is no cache for the specified type.
+//	newInfos := make(map[reflect.Type]*decodeStructInfo, len(infos)+1)
+//	// Copy the exist cache.
+//	for key, info := range infos {
+//		newInfos[key] = info
+//	}
+//	info := new(decodeStructInfo)
+//	info.init(v, dg)
+//	newInfos[v.Type()] = info
+//	atomic.StorePointer(addr, unsafe.Pointer(&newInfos))
+//	return info
+//}
